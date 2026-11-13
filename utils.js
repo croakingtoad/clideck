@@ -11,6 +11,26 @@ function ensurePtyHelper() {
   } catch {}
 }
 
+// Node binary path to write into agent hook configs. Under Homebrew,
+// process.execPath is the versioned Cellar path, which `brew upgrade node`
+// deletes; the opt/<formula> symlink survives upgrades.
+function stableNodePath(execPath = process.execPath) {
+  const p = execPath.replace(/\\/g, '/');
+  const m = p.match(/^(.*)\/Cellar\/([^/]+)\/[^/]+\/(bin\/node)$/);
+  if (m) {
+    const opt = `${m[1]}/opt/${m[2]}/${m[3]}`;
+    if (existsSync(opt)) return opt;
+  }
+  return p;
+}
+
+// False when a hook command starts with a quoted interpreter path that no
+// longer exists (e.g. a Cellar node removed by `brew upgrade`).
+function hookNodeExists(command) {
+  const m = String(command || '').match(/^\s*"([^"]+)"/);
+  return !m || existsSync(m[1]);
+}
+
 function parseCommand(str) {
   const parts = [];
   let current = '';
@@ -69,4 +89,4 @@ function binName(command) {
   return exec.split(/[\\/]/).pop().split(/\s/)[0].replace(/\.(exe|cmd)$/i, '');
 }
 
-module.exports = { ensurePtyHelper, parseCommand, resolveValidDir, listDirs, defaultShell, binName };
+module.exports = { ensurePtyHelper, stableNodePath, hookNodeExists, parseCommand, resolveValidDir, listDirs, defaultShell, binName };

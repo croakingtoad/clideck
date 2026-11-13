@@ -6,7 +6,7 @@ const config = require('./config');
 const sessions = require('./sessions');
 const themes = require('./themes');
 const presets = JSON.parse(readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
-const { listDirs, binName, defaultShell } = require('./utils');
+const { listDirs, binName, defaultShell, stableNodePath, hookNodeExists } = require('./utils');
 const { PORT } = require('./runtime');
 for (const p of presets) if (p.presetId === 'shell') p.command = defaultShell;
 function isPresetEnabled(preset) {
@@ -167,7 +167,7 @@ function hasExistingHook(arr, hookFile, route) {
   return !!arr?.some(h => h.hooks?.some(x => {
     if (!x.command?.includes(hookFile) || !x.command?.includes(` ${route}`)) return false;
     const hookPath = extractQuotedPath(x.command, hookFile);
-    return !!hookPath && existsSync(hookPath);
+    return !!hookPath && existsSync(hookPath) && hookNodeExists(x.command);
   }));
 }
 
@@ -193,7 +193,7 @@ function codexConfigLooksHealthy(content, port, codexHome) {
   if (!notifyLine.includes('notify-helper')) return false;
   const quoted = [...notifyLine.matchAll(/"([^"]+)"/g)].map(m => m[1]);
   const helperPath = quoted.find(v => v.includes('notify-helper'));
-  return !!helperPath && existsSync(helperPath);
+  return !!helperPath && existsSync(helperPath) && (!quoted[0] || quoted[0] === helperPath || existsSync(quoted[0]));
 }
 
 function detectTelemetryConfig(c) {
@@ -619,7 +619,7 @@ function applyTelemetryConfig(preset, cmd = null) {
         try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
       }
       const hooks = settings.hooks || {};
-      const hookCmd = (route) => `"${process.execPath.replace(/\\/g, '/')}" "${join(__dirname, 'bin', 'claude-hook.js').replace(/\\/g, '/')}" ${port} ${route}`;
+      const hookCmd = (route) => `"${stableNodePath()}" "${join(__dirname, 'bin', 'claude-hook.js').replace(/\\/g, '/')}" ${port} ${route}`;
       const clideckHook = (route) => ({ hooks: [{ type: 'command', command: hookCmd(route) }] });
       const hasClideck = (arr, path) => arr?.some(h => h.hooks?.some(x => x.command === hookCmd(path)));
       if (hasClideck(hooks.UserPromptSubmit, 'start') && hasClideck(hooks.Stop, 'stop') && hasClideck(hooks.StopFailure, 'stop') && hasClideck(hooks.PreToolUse, 'menu') && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))) {
@@ -647,22 +647,18 @@ function applyTelemetryConfig(preset, cmd = null) {
       const configPath = join(codexHome, 'config.toml');
       let content = '';
       if (existsSync(configPath)) content = readFileSync(configPath, 'utf8');
-      const hasOtel = content.includes('[otel]');
-      const hasCurrentOtel = content.includes(`localhost:${port}`);
-      const hasNotify = /^\s*notify\s*=.*notify-helper/m.test(content);
       const hasWrongOtel = content.includes(`endpoint = "http://localhost:${port}/v1/logs"`);
       const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
-      const hasHooks = codexHooksFeatureEnabled(content) && codexHooksHealthy(codexHome, codexHookPath, port);
-      if (hasOtel && hasCurrentOtel && hasNotify && !hasWrongOtel && hasHooks) {
+      if (!hasWrongOtel && codexConfigLooksHealthy(content, port, codexHome)) {
         return { success: true, message: 'Already configured' };
       }
       const notifyHelperPath = join(__dirname, 'bin', 'notify-helper.js').replace(/\\/g, '/');
-      const nextContent = upsertCodexConfig(content, process.execPath.replace(/\\/g, '/'), notifyHelperPath, port);
+      const nextContent = upsertCodexConfig(content, stableNodePath(), notifyHelperPath, port);
       const valid = validateCodexConfigToml(nextContent);
       if (!valid.ok) return { success: false, message: valid.error };
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, nextContent);
-      installCodexHooks(codexHome, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
+      installCodexHooks(codexHome, stableNodePath(), codexHookPath, port);
       return { success: true, message: 'Configured. If Codex shows "2 hooks need review", open /hooks and approve the CliDeck hooks once.' };
     }
 
@@ -674,7 +670,7 @@ function applyTelemetryConfig(preset, cmd = null) {
       }
       const hooks = settings.hooks || {};
       const helperPath = join(__dirname, 'bin', 'gemini-hook.js').replace(/\\/g, '/');
-      const nodePath = process.execPath.replace(/\\/g, '/');
+      const nodePath = stableNodePath();
       const hookCmd = (route) => `"${nodePath}" "${helperPath}" ${port} ${route}`;
       const geminiHook = (route) => ({
         matcher: '*',

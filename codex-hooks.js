@@ -1,5 +1,6 @@
 const { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } = require('fs');
 const { dirname, join } = require('path');
+const { stableNodePath, hookNodeExists } = require('./utils');
 
 const EVENTS = {
   UserPromptSubmit: 'start',
@@ -78,10 +79,10 @@ function codexHooksHealthy(codexHome, helperPath, port) {
     const doc = readHooksFile(join(codexHome, 'hooks.json'));
     for (const [event, route] of Object.entries(EVENTS)) {
       const groups = Array.isArray(doc.hooks?.[event]) ? doc.hooks[event] : [];
-      const expected = commandFor(process.execPath.replace(/\\/g, '/'), helperPath, port, route);
+      const expected = commandFor(stableNodePath(), helperPath, port, route);
       const found = groups.some(group => (group.hooks || []).some(hook => {
         if (!isClideckHook(hook)) return false;
-        return hook.command === expected || (hook.command.includes(helperPath) && hook.command.includes(` ${port} ${route}`));
+        return hook.command === expected || (hook.command.includes(helperPath) && hook.command.includes(` ${port} ${route}`) && hookNodeExists(hook.command));
       }));
       if (!found) return false;
     }
